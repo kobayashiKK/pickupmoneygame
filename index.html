@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>傘でお金キャッチ！</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: #1a1c2c;
+    font-family: "Hiragino Maru Gothic ProN", "Yu Gothic", sans-serif;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+  }
+  #wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    display: block;
+    background: linear-gradient(#5fc7ee 0%, #aee6f7 60%, #d9f4e8 100%);
+    box-shadow: 0 0 40px rgba(0,0,0,0.5);
+    touch-action: none;
+  }
+  /* HUD */
+  #hud {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    color: #1a1c2c;
+    font-weight: bold;
+    pointer-events: none;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+  }
+  #hud .col { line-height: 1.4; }
+  #hud .big { font-size: 22px; }
+  #hud .right { text-align: right; }
+  #lives { font-size: 20px; letter-spacing: 2px; }
+
+  /* Overlay screens */
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #fff;
+    background: rgba(26, 28, 44, 0.82);
+    padding: 24px;
+  }
+  .screen.hidden { display: none; }
+  .screen h1 { font-size: 30px; margin-bottom: 6px; }
+  .screen h2 { font-size: 26px; margin-bottom: 10px; }
+  .screen p { font-size: 15px; line-height: 1.7; margin-bottom: 6px; max-width: 340px; }
+  .screen .score-line { font-size: 20px; margin: 8px 0; }
+  .screen .hi { color: #ffd23f; }
+  .btn {
+    margin-top: 18px;
+    background: #ffd23f;
+    color: #1a1c2c;
+    border: none;
+    border-radius: 999px;
+    padding: 14px 34px;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 0 #c79a1f;
+    pointer-events: auto;
+  }
+  .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #c79a1f; }
+  .legend { font-size: 14px; margin: 4px 0; }
+  .small { font-size: 12px; opacity: 0.8; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div class="col">
+      <div class="big">¥<span id="score">0</span></div>
+      <div id="lives">❤❤❤</div>
+    </div>
+    <div class="col right">
+      <div>ハイスコア</div>
+      <div class="big hi">¥<span id="hiscore">0</span></div>
+      <div>残り <span id="time">60</span>秒</div>
+    </div>
+  </div>
+
+  <!-- Start screen -->
+  <div id="startScreen" class="screen">
+    <h1>☂ 傘でお金キャッチ！ 💴</h1>
+    <p>空からお金が降ってきます。傘を逆さまに広げて、左右に動いてお金を拾おう！</p>
+    <div class="legend">🪙 小銭 = 数十〜数百円</div>
+    <div class="legend">💵 紙幣 = 千〜一万円！</div>
+    <div class="legend">💣 爆弾 = ライフが減る！避けろ！</div>
+    <p style="margin-top:14px;">制限時間は60秒。爆弾を3回拾うとゲームオーバー。</p>
+    <button class="btn" id="startBtn">スタート</button>
+    <div class="small">操作：← → キー / マウス / 指でドラッグ</div>
+  </div>
+
+  <!-- Game over screen -->
+  <div id="overScreen" class="screen hidden">
+    <h2 id="overTitle">ゲームオーバー</h2>
+    <div class="score-line">拾ったお金： ¥<span id="finalScore">0</span></div>
+    <div class="score-line hi">ハイスコア： ¥<span id="finalHi">0</span></div>
+    <p id="newRecord" class="hidden" style="color:#ffd23f;font-weight:bold;">🎉 ハイスコア更新！ 🎉</p>
+    <button class="btn" id="retryBtn">もう一度</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Canvas setup ----
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  // Logical (design) resolution. We scale to fit the window while keeping aspect.
+  const VW = 420, VH = 720;
+  let scale = 1, dpr = 1;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const maxW = window.innerWidth;
+    const maxH = window.innerHeight;
+    scale = Math.min(maxW / VW, maxH / VH);
+    canvas.style.width = VW * scale + "px";
+    canvas.style.height = VH * scale + "px";
+    canvas.width = Math.round(VW * scale * dpr);
+    canvas.height = Math.round(VH * scale * dpr);
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // ---- Game state ----
+  const HISCORE_KEY = "umbrellaMoneyHiScore";
+  let hiScore = parseInt(localStorage.getItem(HISCORE_KEY) || "0", 10) || 0;
+
+  const STATE = { MENU: 0, PLAY: 1, OVER: 2 };
+  let state = STATE.MENU;
+
+  const GAME_SECONDS = 60;
+  const MAX_LIVES = 3;
+
+  let score = 0;
+  let lives = MAX_LIVES;
+  let timeLeft = GAME_SECONDS;
+
+  // Player umbrella
+  const umbrella = {
+    x: VW / 2,
+    y: VH - 120,
+    w: 110,     // catch width (rim of upside-down umbrella)
+    speed: 7,
+  };
+  let moveLeft = false, moveRight = false;
+  let pointerActive = false;
+
+  // Falling items
+  let items = [];
+  let particles = [];
+  let spawnTimer = 0;
+  let elapsed = 0;        // seconds since round start (for difficulty)
+  let lastTime = 0;
+
+  // Item definitions
+  const COINS = [
+    { label: "1",   value: 10,  color: "#caa04a", r: 13 },
+    { label: "5",   value: 50,  color: "#d9bf6e", r: 14 },
+    { label: "100", value: 100, color: "#c9c9cf", r: 15 },
+    { label: "500", value: 500, color: "#d4af37", r: 17 },
+  ];
+  const BILLS = [
+    { label: "¥1000",  value: 1000,  color: "#9fd6c0" },
+    { label: "¥5000",  value: 5000,  color: "#c8b6e2" },
+    { label: "¥10000", value: 10000, color: "#e9c6a0" },
+  ];
+
+  // ---- DOM refs ----
+  const $score = document.getElementById("score");
+  const $hiscore = document.getElementById("hiscore");
+  const $time = document.getElementById("time");
+  const $lives = document.getElementById("lives");
+  const startScreen = document.getElementById("startScreen");
+  const overScreen = document.getElementById("overScreen");
+
+  $hiscore.textContent = fmt(hiScore);
+
+  function fmt(n) { return n.toLocaleString("ja-JP"); }
+
+  function updateHud() {
+    $score.textContent = fmt(score);
+    $hiscore.textContent = fmt(Math.max(hiScore, score));
+    $time.textContent = Math.ceil(timeLeft);
+    $lives.textContent = "❤".repeat(lives) + "🖤".repeat(MAX_LIVES - lives);
+  }
+
+  // ---- Spawning ----
+  function spawnItem() {
+    // Difficulty ramps with elapsed time.
+    const diff = Math.min(elapsed / GAME_SECONDS, 1);
+    const r = Math.random();
+
+    let type;
+    // Bomb chance grows from ~8% to ~22%.
+    const bombChance = 0.08 + diff * 0.14;
+    if (r < bombChance) type = "bomb";
+    else if (r < bombChance + 0.22) type = "bill";
+    else type = "coin";
+
+    const item = {
+      type,
+      x: 24 + Math.random() * (VW - 48),
+      y: -30,
+      vy: 110 + Math.random() * 90 + diff * 120, // px/sec, faster over time
+      rot: 0,
+      vrot: (Math.random() - 0.5) * 4,
+    };
+
+    if (type === "coin") {
+      const c = COINS[Math.floor(Math.random() * COINS.length)];
+      Object.assign(item, c, { w: c.r * 2, h: c.r * 2 });
+    } else if (type === "bill") {
+      const b = BILLS[Math.floor(Math.random() * BILLS.length)];
+      Object.assign(item, b, { w: 46, h: 26 });
+    } else { // bomb
+      item.r = 16; item.w = 36; item.h = 36; item.value = 0;
+    }
+    items.push(item);
+  }
+
+  // ---- Catch detection ----
+  function tryCatch(item) {
+    // Catch zone: along the umbrella rim near the top of the umbrella.
+    const rimY = umbrella.y - 18;
+    const halfW = umbrella.w / 2;
+    const within =
+      item.y >= rimY - 14 && item.y <= rimY + 26 &&
+      item.x >= umbrella.x - halfW && item.x <= umbrella.x + halfW;
+    return within;
+  }
+
+  function onCatch(item) {
+    if (item.type === "bomb") {
+      lives--;
+      shake(14);
+      burst(item.x, item.y, "#ff5d5d", 18);
+      if (lives <= 0) endGame();
+    } else {
+      score += item.value;
+      burst(item.x, item.y, item.type === "bill" ? "#3fbf7f" : "#ffd23f", 10);
+      floatText(item.x, item.y, "+¥" + fmt(item.value),
+        item.type === "bill" ? "#1a7d4f" : "#a07a00");
+    }
+  }
+
+  // ---- Effects ----
+  let shakeMag = 0;
+  function shake(m) { shakeMag = Math.max(shakeMag, m); }
+
+  function burst(x, y, color, n) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 40 + Math.random() * 160;
+      particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40,
+        life: 0.6, max: 0.6, color, kind: "dot",
+      });
+    }
+  }
+  function floatText(x, y, text, color) {
+    particles.push({ x, y, vx: 0, vy: -50, life: 0.9, max: 0.9, color, text, kind: "text" });
+  }
+
+  // ---- Round control ----
+  function startGame() {
+    score = 0; lives = MAX_LIVES; timeLeft = GAME_SECONDS;
+    items = []; particles = []; spawnTimer = 0; elapsed = 0;
+    umbrella.x = VW / 2;
+    state = STATE.PLAY;
+    startScreen.classList.add("hidden");
+    overScreen.classList.add("hidden");
+    lastTime = performance.now();
+    updateHud();
+  }
+
+  function endGame() {
+    state = STATE.OVER;
+    const isRecord = score > hiScore;
+    if (isRecord) {
+      hiScore = score;
+      localStorage.setItem(HISCORE_KEY, String(hiScore));
+    }
+    document.getElementById("finalScore").textContent = fmt(score);
+    document.getElementById("finalHi").textContent = fmt(hiScore);
+    document.getElementById("overTitle").textContent =
+      lives <= 0 ? "💥 ゲームオーバー" : "⏰ タイムアップ！";
+    document.getElementById("newRecord").classList.toggle("hidden", !isRecord);
+    overScreen.classList.remove("hidden");
+    updateHud();
+  }
+
+  // ---- Main loop ----
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    if (state === STATE.PLAY) update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    elapsed += dt;
+    timeLeft -= dt;
+    if (timeLeft <= 0) { timeLeft = 0; endGame(); return; }
+
+    // Move umbrella via keys
+    if (moveLeft) umbrella.x -= umbrella.speed * dt * 60;
+    if (moveRight) umbrella.x += umbrella.speed * dt * 60;
+    const half = umbrella.w / 2;
+    umbrella.x = Math.max(half, Math.min(VW - half, umbrella.x));
+
+    // Spawn
+    spawnTimer -= dt;
+    const spawnInterval = Math.max(0.35, 0.95 - elapsed * 0.01);
+    if (spawnTimer <= 0) { spawnItem(); spawnTimer = spawnInterval; }
+
+    // Update items
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      it.y += it.vy * dt;
+      it.rot += it.vrot * dt;
+      if (tryCatch(it)) { onCatch(it); items.splice(i, 1); continue; }
+      if (it.y > VH + 40) items.splice(i, 1);
+    }
+
+    // Update particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life -= dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.kind === "dot") p.vy += 300 * dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    if (shakeMag > 0) shakeMag = Math.max(0, shakeMag - dt * 40);
+    updateHud();
+  }
+
+  // ---- Rendering ----
+  function render() {
+    ctx.clearRect(0, 0, VW, VH);
+
+    ctx.save();
+    if (shakeMag > 0) {
+      ctx.translate((Math.random() - 0.5) * shakeMag, (Math.random() - 0.5) * shakeMag);
+    }
+
+    drawClouds();
+    for (const it of items) drawItem(it);
+    drawUmbrella();
+    for (const p of particles) drawParticle(p);
+
+    ctx.restore();
+  }
+
+  // Simple parallax-ish clouds (static decorative)
+  const clouds = [
+    { x: 70, y: 120, s: 1 }, { x: 300, y: 90, s: 1.3 },
+    { x: 200, y: 220, s: 0.8 }, { x: 360, y: 280, s: 1.1 },
+  ];
+  function drawClouds() {
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    for (const c of clouds) {
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y, 34 * c.s, 20 * c.s, 0, 0, Math.PI * 2);
+      ctx.ellipse(c.x + 26 * c.s, c.y + 6 * c.s, 24 * c.s, 16 * c.s, 0, 0, Math.PI * 2);
+      ctx.ellipse(c.x - 26 * c.s, c.y + 6 * c.s, 22 * c.s, 14 * c.s, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawItem(it) {
+    ctx.save();
+    ctx.translate(it.x, it.y);
+    ctx.rotate(it.rot * 0.3);
+    if (it.type === "coin") {
+      // Coin body
+      ctx.beginPath();
+      ctx.arc(0, 0, it.r, 0, Math.PI * 2);
+      ctx.fillStyle = it.color;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(0,0,0,0.25)";
+      ctx.stroke();
+      // inner ring + label
+      ctx.beginPath();
+      ctx.arc(0, 0, it.r - 4, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.5)";
+      ctx.stroke();
+      ctx.fillStyle = "#5a4a10";
+      ctx.font = "bold " + (it.r - 2) + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(it.label, 0, 1);
+    } else if (it.type === "bill") {
+      const w = it.w, h = it.h;
+      ctx.fillStyle = it.color;
+      roundRect(-w / 2, -h / 2, w, h, 4);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.25)";
+      ctx.lineWidth = 1.5;
+      roundRect(-w / 2, -h / 2, w, h, 4);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, 7, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.stroke();
+      ctx.fillStyle = "#2a4a3a";
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(it.label, 0, 0);
+    } else { // bomb
+      ctx.beginPath();
+      ctx.arc(0, 0, it.r, 0, Math.PI * 2);
+      ctx.fillStyle = "#2b2b33";
+      ctx.fill();
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // highlight
+      ctx.beginPath();
+      ctx.arc(-5, -5, 4, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.4)";
+      ctx.fill();
+      // fuse
+      ctx.strokeStyle = "#8a5a2b";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, -it.r);
+      ctx.quadraticCurveTo(8, -it.r - 8, 12, -it.r - 4);
+      ctx.stroke();
+      // spark
+      ctx.beginPath();
+      ctx.arc(13, -it.r - 4, 3, 0, Math.PI * 2);
+      ctx.fillStyle = "#ff9d2b";
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawUmbrella() {
+    const x = umbrella.x, y = umbrella.y, w = umbrella.w;
+    const half = w / 2;
+
+    // Person (simple) under the umbrella, holding it overhead.
+    ctx.save();
+    // body
+    ctx.strokeStyle = "#33415c";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x, y + 30);
+    ctx.lineTo(x, y + 78);
+    ctx.stroke();
+    // legs
+    ctx.beginPath();
+    ctx.moveTo(x, y + 78); ctx.lineTo(x - 12, y + 104);
+    ctx.moveTo(x, y + 78); ctx.lineTo(x + 12, y + 104);
+    ctx.stroke();
+    // arms up holding pole
+    ctx.beginPath();
+    ctx.moveTo(x, y + 44); ctx.lineTo(x - 14, y + 14);
+    ctx.moveTo(x, y + 44); ctx.lineTo(x + 14, y + 14);
+    ctx.stroke();
+    // head
+    ctx.beginPath();
+    ctx.arc(x, y + 18, 11, 0, Math.PI * 2);
+    ctx.fillStyle = "#f1c89b";
+    ctx.fill();
+    ctx.restore();
+
+    // Upside-down umbrella (a bowl that catches money)
+    // pole
+    ctx.strokeStyle = "#6b4f2a";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 16);
+    ctx.lineTo(x, y + 6);
+    ctx.stroke();
+
+    // bowl (open upward)
+    const rimY = y - 18;
+    const depth = 34;
+    ctx.beginPath();
+    ctx.moveTo(x - half, rimY);
+    ctx.quadraticCurveTo(x, rimY + depth + 18, x + half, rimY);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, rimY, 0, rimY + depth);
+    grad.addColorStop(0, "#ff6b6b");
+    grad.addColorStop(1, "#c0392b");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = "#7d211a";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // rim highlight + ribs
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - half, rimY);
+    ctx.lineTo(x + half, rimY);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,0.18)";
+    ctx.lineWidth = 1.5;
+    for (let k = -1; k <= 1; k++) {
+      ctx.beginPath();
+      ctx.moveTo(x + k * (half / 1.5), rimY);
+      ctx.lineTo(x, rimY + depth + 14);
+      ctx.stroke();
+    }
+  }
+
+  function drawParticle(p) {
+    const a = Math.max(0, p.life / p.max);
+    if (p.kind === "text") {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      ctx.font = "bold 18px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(p.text, p.x, p.y);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ---- Input ----
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "a") moveLeft = true;
+    if (e.key === "ArrowRight" || e.key === "d") moveRight = true;
+    if ((e.key === " " || e.key === "Enter")) {
+      if (state === STATE.MENU || state === STATE.OVER) startGame();
+    }
+  });
+  document.addEventListener("keyup", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "a") moveLeft = false;
+    if (e.key === "ArrowRight" || e.key === "d") moveRight = false;
+  });
+
+  // Pointer (mouse + touch) — move umbrella to pointer x within canvas.
+  function pointerX(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    return (clientX - rect.left) / rect.width * VW;
+  }
+  function handlePointer(clientX) {
+    if (state !== STATE.PLAY) return;
+    const x = pointerX(clientX);
+    const half = umbrella.w / 2;
+    umbrella.x = Math.max(half, Math.min(VW - half, x));
+  }
+  canvas.addEventListener("mousedown", (e) => { pointerActive = true; handlePointer(e.clientX); });
+  window.addEventListener("mousemove", (e) => { if (pointerActive) handlePointer(e.clientX); });
+  window.addEventListener("mouseup", () => { pointerActive = false; });
+  canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault(); handlePointer(e.touches[0].clientX);
+  }, { passive: false });
+  canvas.addEventListener("touchmove", (e) => {
+    e.preventDefault(); handlePointer(e.touches[0].clientX);
+  }, { passive: false });
+
+  document.getElementById("startBtn").addEventListener("click", startGame);
+  document.getElementById("retryBtn").addEventListener("click", startGame);
+
+  // ---- Go ----
+  updateHud();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
