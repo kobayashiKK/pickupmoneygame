@@ -89,6 +89,33 @@
     pointer-events: auto;
   }
   .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #c79a1f; }
+  .btn-sub {
+    background: #e7e7ee;
+    box-shadow: 0 4px 0 #a9a9b3;
+    margin-top: 12px;
+    padding: 11px 28px;
+    font-size: 16px;
+  }
+  .btn-sub:active { transform: translateY(3px); box-shadow: 0 1px 0 #a9a9b3; }
+  /* Pause button shown during play */
+  #pauseBtn {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 42px;
+    height: 42px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(26, 28, 44, 0.55);
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    display: none;
+    pointer-events: auto;
+    z-index: 5;
+  }
+  #pauseBtn:active { transform: translateX(-50%) scale(0.92); }
   .reward-level {
     font-size: 22px; font-weight: bold; color: #ffd23f;
     margin: 6px 0 2px;
@@ -139,6 +166,18 @@
     <p id="newRecord" class="hidden" style="color:#ffd23f;font-weight:bold;">🎉 ハイスコア更新！ 🎉</p>
     <button class="btn" id="retryBtn">もう一度</button>
   </div>
+
+  <!-- Pause button (visible only while playing) -->
+  <button id="pauseBtn" aria-label="一時停止">⏸</button>
+
+  <!-- Pause screen -->
+  <div id="pauseScreen" class="screen hidden">
+    <h2>⏸ 一時停止中</h2>
+    <p>ひと休み中。続きから再開できます。</p>
+    <button class="btn" id="resumeBtn">再開する</button>
+    <button class="btn btn-sub" id="restartBtn">最初から</button>
+    <button class="btn btn-sub" id="quitBtn">タイトルへ</button>
+  </div>
 </div>
 
 <script>
@@ -171,10 +210,9 @@
   const HISCORE_KEY = "umbrellaMoneyHiScore";
   let hiScore = parseInt(localStorage.getItem(HISCORE_KEY) || "0", 10) || 0;
 
-  const STATE = { MENU: 0, PLAY: 1, OVER: 2 };
+  const STATE = { MENU: 0, PLAY: 1, OVER: 2, PAUSE: 3 };
   let state = STATE.MENU;
 
-  const RAMP_SECONDS = 60; // time scale used only for difficulty ramping
   const MAX_LIVES = 3;
 
   let score = 0;
@@ -192,10 +230,28 @@
   let moveLeft = false, moveRight = false;
   let pointerActive = false;
 
-  // Difficulty level (rises with time and score) and on-screen notice
+  // Difficulty: rises with time and score, but the effect alternates each
+  // level between shrinking the umbrella and speeding up the falling money.
   let level = 0;
+  let shrinkCount = 0; // how many "umbrella shrink" steps have been applied
+  let fallMult = 1;    // multiplier on falling speed ("speed up" steps)
   let notice = { text: "", t: 0, max: 1 };
   function notify(text, dur) { notice.text = text; notice.t = dur; notice.max = dur; }
+
+  // Apply one difficulty step. Odd steps shrink the umbrella, even steps speed
+  // up the money — but if the umbrella is already at its minimum, a shrink step
+  // becomes a speed-up instead.
+  function applyLevelStep(lv) {
+    const curTarget = Math.max(umbrella.minW, umbrella.baseW - shrinkCount * 12);
+    const canShrink = curTarget > umbrella.minW + 0.5;
+    if (lv % 2 === 1 && canShrink) {
+      shrinkCount++;
+      notify("レベルアップ！\n☂ 傘が小さくなった！", 1.8);
+    } else {
+      fallMult += 0.18;
+      notify("レベルアップ！\n⚡ お金が速くなった！", 1.8);
+    }
+  }
 
   // Falling items
   let items = [];
@@ -224,6 +280,8 @@
   const $level = document.getElementById("level");
   const startScreen = document.getElementById("startScreen");
   const overScreen = document.getElementById("overScreen");
+  const pauseScreen = document.getElementById("pauseScreen");
+  const pauseBtn = document.getElementById("pauseBtn");
 
   $hiscore.textContent = fmt(hiScore);
 
@@ -245,22 +303,21 @@
 
   // ---- Spawning ----
   function spawnItem() {
-    // Difficulty ramps with elapsed time.
-    const diff = Math.min(elapsed / RAMP_SECONDS, 1);
     const r = Math.random();
 
     let type;
-    // Bomb chance grows from ~8% to ~22%.
-    const bombChance = 0.08 + diff * 0.14;
+    // Bomb chance grows slowly with level (capped).
+    const bombChance = Math.min(0.20, 0.08 + level * 0.012);
     if (r < bombChance) type = "bomb";
     else if (r < bombChance + 0.22) type = "bill";
     else type = "coin";
 
+    // Falling speed only rises via "speed up" difficulty steps (fallMult).
     const item = {
       type,
       x: 24 + Math.random() * (VW - 48),
       y: -30,
-      vy: 110 + Math.random() * 90 + diff * 120, // px/sec, faster over time
+      vy: (110 + Math.random() * 90) * fallMult, // px/sec
       rot: 0,
       vrot: (Math.random() - 0.5) * 4,
     };
@@ -343,18 +400,43 @@
   function startGame() {
     score = 0; lives = MAX_LIVES;
     items = []; particles = []; spawnTimer = 0; elapsed = 0;
-    level = 0; notice.t = 0;
+    level = 0; shrinkCount = 0; fallMult = 1; notice.t = 0;
     umbrella.x = VW / 2;
     umbrella.w = umbrella.baseW;
     state = STATE.PLAY;
     startScreen.classList.add("hidden");
     overScreen.classList.add("hidden");
+    pauseScreen.classList.add("hidden");
+    pauseBtn.style.display = "block";
     lastTime = performance.now();
     updateHud();
   }
 
+  // ---- Pause / interrupt ----
+  function pauseGame() {
+    if (state !== STATE.PLAY) return;
+    state = STATE.PAUSE;
+    moveLeft = moveRight = false;
+    pauseBtn.style.display = "none";
+    pauseScreen.classList.remove("hidden");
+  }
+  function resumeGame() {
+    if (state !== STATE.PAUSE) return;
+    state = STATE.PLAY;
+    pauseScreen.classList.add("hidden");
+    pauseBtn.style.display = "block";
+    lastTime = performance.now(); // avoid a big dt jump after the pause
+  }
+  function quitToTitle() {
+    state = STATE.MENU;
+    pauseScreen.classList.add("hidden");
+    pauseBtn.style.display = "none";
+    startScreen.classList.remove("hidden");
+  }
+
   function endGame() {
     state = STATE.OVER;
+    pauseBtn.style.display = "none";
     const isRecord = score > hiScore;
     if (isRecord) {
       hiScore = score;
@@ -387,21 +469,16 @@
   function update(dt) {
     elapsed += dt;
 
-    // Difficulty rises with both time and score. The umbrella shrinks until it
-    // hits its minimum; after that, only the falling speed keeps increasing.
-    const newLevel = Math.floor(elapsed / 12) + Math.floor(score / 2500);
+    // Difficulty rises with both time and score, but slowly (less often than
+    // before). Each step alternates between shrinking the umbrella and
+    // speeding up the falling money.
+    const newLevel = Math.floor(elapsed / 22) + Math.floor(score / 6000);
     if (newLevel > level) {
-      const prevTarget = Math.max(umbrella.minW, umbrella.baseW - level * 9);
-      const curTarget = Math.max(umbrella.minW, umbrella.baseW - newLevel * 9);
+      for (let lv = level + 1; lv <= newLevel; lv++) applyLevelStep(lv);
       level = newLevel;
-      if (curTarget < prevTarget - 0.5) {
-        notify("レベルアップ！\n☂ 傘が小さくなった！", 1.8);
-      } else {
-        notify("スピードアップ！\n⚡ お金が速くなった！", 1.8);
-      }
       shake(8);
     }
-    const targetW = Math.max(umbrella.minW, umbrella.baseW - level * 9);
+    const targetW = Math.max(umbrella.minW, umbrella.baseW - shrinkCount * 12);
     umbrella.w += (targetW - umbrella.w) * Math.min(1, dt * 4);
     if (notice.t > 0) notice.t -= dt;
 
@@ -413,7 +490,7 @@
 
     // Spawn
     spawnTimer -= dt;
-    const spawnInterval = Math.max(0.35, 0.95 - elapsed * 0.01);
+    const spawnInterval = 0.8; // steady spawn rate; difficulty comes from size/speed
     if (spawnTimer <= 0) { spawnItem(); spawnTimer = spawnInterval; }
 
     // Update items
@@ -699,6 +776,11 @@
     if ((e.key === " " || e.key === "Enter")) {
       if (state === STATE.MENU || state === STATE.OVER) startGame();
     }
+    // P or Esc toggles pause during play.
+    if (e.key === "p" || e.key === "P" || e.key === "Escape") {
+      if (state === STATE.PLAY) pauseGame();
+      else if (state === STATE.PAUSE) resumeGame();
+    }
   });
   document.addEventListener("keyup", (e) => {
     if (e.key === "ArrowLeft" || e.key === "a") moveLeft = false;
@@ -728,6 +810,10 @@
 
   document.getElementById("startBtn").addEventListener("click", startGame);
   document.getElementById("retryBtn").addEventListener("click", startGame);
+  pauseBtn.addEventListener("click", pauseGame);
+  document.getElementById("resumeBtn").addEventListener("click", resumeGame);
+  document.getElementById("restartBtn").addEventListener("click", startGame);
+  document.getElementById("quitBtn").addEventListener("click", quitToTitle);
 
   // ---- Go ----
   updateHud();
