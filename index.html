@@ -490,7 +490,9 @@
 
     // Spawn
     spawnTimer -= dt;
-    const spawnInterval = 0.8; // steady spawn rate; difficulty comes from size/speed
+    // Spawn faster as the money falls faster, so the number of items on screen
+    // at once stays roughly constant regardless of level/speed.
+    const spawnInterval = 0.8 / fallMult;
     if (spawnTimer <= 0) { spawnItem(); spawnTimer = spawnInterval; }
 
     // Update items
