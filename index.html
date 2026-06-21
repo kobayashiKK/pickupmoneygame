@@ -46,7 +46,15 @@
   #hud .col { line-height: 1.4; }
   #hud .big { font-size: 22px; }
   #hud .right { text-align: right; }
-  #lives { font-size: 20px; letter-spacing: 2px; }
+  #hud .lives-row { font-size: 14px; margin-top: 2px; }
+  #hud .lv { font-size: 13px; opacity: 0.85; margin-top: 2px; }
+  #lives { font-size: 22px; letter-spacing: 1px; display: inline-block; transform-origin: left center; }
+  #lives.hit { animation: heartHit 0.45s ease; }
+  @keyframes heartHit {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.5); }
+    100% { transform: scale(1); }
+  }
 
   /* Overlay screens */
   .screen {
@@ -81,6 +89,14 @@
     pointer-events: auto;
   }
   .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #c79a1f; }
+  .reward-level {
+    font-size: 22px; font-weight: bold; color: #ffd23f;
+    margin: 6px 0 2px;
+  }
+  .reward-items {
+    font-size: 14px; line-height: 1.6; color: #fff;
+    max-width: 320px; margin-bottom: 10px;
+  }
   .legend { font-size: 14px; margin: 4px 0; }
   .small { font-size: 12px; opacity: 0.8; margin-top: 14px; }
 </style>
@@ -92,7 +108,8 @@
   <div id="hud">
     <div class="col">
       <div class="big">¥<span id="score">0</span></div>
-      <div id="lives">❤❤❤</div>
+      <div class="lives-row">ライフ <span id="lives">❤️❤️❤️</span></div>
+      <div class="lv">レベル <span id="level">1</span></div>
     </div>
     <div class="col right">
       <div>ハイスコア</div>
@@ -117,6 +134,8 @@
   <div id="overScreen" class="screen hidden">
     <h2 id="overTitle">ゲームオーバー</h2>
     <div class="score-line">拾ったお金： ¥<span id="finalScore">0</span></div>
+    <div id="rewardLevel" class="reward-level"></div>
+    <p id="rewardItems" class="reward-items"></p>
     <div class="score-line hi">ハイスコア： ¥<span id="finalHi">0</span></div>
     <p id="newRecord" class="hidden" style="color:#ffd23f;font-weight:bold;">🎉 ハイスコア更新！ 🎉</p>
     <button class="btn" id="retryBtn">もう一度</button>
@@ -167,11 +186,18 @@
   const umbrella = {
     x: VW / 2,
     y: VH - 120,
-    w: 110,     // catch width (rim of upside-down umbrella)
+    w: 110,     // current catch width (rim of upside-down umbrella)
+    baseW: 110, // width at level 0
+    minW: 54,   // smallest it can shrink to
     speed: 7,
   };
   let moveLeft = false, moveRight = false;
   let pointerActive = false;
+
+  // Difficulty level (rises with time and score) and on-screen notice
+  let level = 0;
+  let notice = { text: "", t: 0, max: 1 };
+  function notify(text, dur) { notice.text = text; notice.t = dur; notice.max = dur; }
 
   // Falling items
   let items = [];
@@ -198,6 +224,7 @@
   const $hiscore = document.getElementById("hiscore");
   const $time = document.getElementById("time");
   const $lives = document.getElementById("lives");
+  const $level = document.getElementById("level");
   const startScreen = document.getElementById("startScreen");
   const overScreen = document.getElementById("overScreen");
 
@@ -209,7 +236,15 @@
     $score.textContent = fmt(score);
     $hiscore.textContent = fmt(Math.max(hiScore, score));
     $time.textContent = Math.ceil(timeLeft);
-    $lives.textContent = "❤".repeat(lives) + "🖤".repeat(MAX_LIVES - lives);
+    $lives.textContent = "❤️".repeat(lives) + "🤍".repeat(MAX_LIVES - lives);
+    $level.textContent = level + 1;
+  }
+
+  // Briefly pulse the heart display (called when a life is lost).
+  function pulseHearts() {
+    $lives.classList.remove("hit");
+    void $lives.offsetWidth; // restart the CSS animation
+    $lives.classList.add("hit");
   }
 
   // ---- Spawning ----
@@ -262,6 +297,8 @@
       lives--;
       shake(14);
       burst(item.x, item.y, "#ff5d5d", 18);
+      floatText(item.x, item.y, "💥 -1", "#c0392b");
+      pulseHearts();
       if (lives <= 0) endGame();
     } else {
       score += item.value;
@@ -289,11 +326,30 @@
     particles.push({ x, y, vx: 0, vy: -50, life: 0.9, max: 0.9, color, text, kind: "text" });
   }
 
+  // Map the final score to a spending-power level and example purchases.
+  function getReward(s) {
+    const tiers = [
+      { min: 0,      icon: "🪙", level: "おつかいレベル",       items: "ガム1個、駄菓子いくつか" },
+      { min: 500,    icon: "🍙", level: "おこづかいレベル",     items: "ジュース、おにぎり、お菓子" },
+      { min: 2000,   icon: "🍱", level: "コンビニレベル",       items: "コンビニ弁当＋飲み物＋デザート" },
+      { min: 5000,   icon: "🎬", level: "ちょっと贅沢レベル",   items: "映画鑑賞＋ポップコーン、ランチ外食" },
+      { min: 10000,  icon: "🍽️", level: "リッチレベル",         items: "高級ディナー、本が数冊" },
+      { min: 30000,  icon: "♨️", level: "セレブ見習いレベル",   items: "ブランド小物、日帰り温泉旅行" },
+      { min: 70000,  icon: "📱", level: "お金持ちレベル",       items: "最新スマホ、国内旅行" },
+      { min: 150000, icon: "💎", level: "億万長者レベル",       items: "ハイブランドのバッグ、海外旅行 ✈️" },
+    ];
+    let t = tiers[0];
+    for (const tier of tiers) if (s >= tier.min) t = tier;
+    return t;
+  }
+
   // ---- Round control ----
   function startGame() {
     score = 0; lives = MAX_LIVES; timeLeft = GAME_SECONDS;
     items = []; particles = []; spawnTimer = 0; elapsed = 0;
+    level = 0; notice.t = 0;
     umbrella.x = VW / 2;
+    umbrella.w = umbrella.baseW;
     state = STATE.PLAY;
     startScreen.classList.add("hidden");
     overScreen.classList.add("hidden");
@@ -310,6 +366,13 @@
     }
     document.getElementById("finalScore").textContent = fmt(score);
     document.getElementById("finalHi").textContent = fmt(hiScore);
+
+    // Reward: spending-power level + examples of what the money could buy.
+    const reward = getReward(score);
+    document.getElementById("rewardLevel").textContent = reward.icon + " " + reward.level;
+    document.getElementById("rewardItems").textContent =
+      "買えるもの例：" + reward.items +
+      "（うまい棒 約" + fmt(Math.floor(score / 10)) + "本分！）";
     document.getElementById("overTitle").textContent =
       lives <= 0 ? "💥 ゲームオーバー" : "⏰ タイムアップ！";
     document.getElementById("newRecord").classList.toggle("hidden", !isRecord);
@@ -330,6 +393,17 @@
     elapsed += dt;
     timeLeft -= dt;
     if (timeLeft <= 0) { timeLeft = 0; endGame(); return; }
+
+    // Difficulty rises with both time and score; each level shrinks the umbrella.
+    const newLevel = Math.floor(elapsed / 12) + Math.floor(score / 2500);
+    if (newLevel > level) {
+      level = newLevel;
+      notify("レベルアップ！\n☂ 傘が小さくなった！", 1.8);
+      shake(8);
+    }
+    const targetW = Math.max(umbrella.minW, umbrella.baseW - level * 9);
+    umbrella.w += (targetW - umbrella.w) * Math.min(1, dt * 4);
+    if (notice.t > 0) notice.t -= dt;
 
     // Move umbrella via keys
     if (moveLeft) umbrella.x -= umbrella.speed * dt * 60;
@@ -377,7 +451,30 @@
     for (const it of items) drawItem(it);
     drawUmbrella();
     for (const p of particles) drawParticle(p);
+    drawNotice();
 
+    ctx.restore();
+  }
+
+  // Center banner for level-up / difficulty announcements.
+  function drawNotice() {
+    if (notice.t <= 0) return;
+    const a = Math.min(1, notice.t / 0.4); // fade out near the end
+    const lines = notice.text.split("\n");
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 22px sans-serif";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "#7d211a";
+    ctx.fillStyle = "#ffd23f";
+    lines.forEach((ln, i) => {
+      const yy = VH * 0.3 + i * 28;
+      ctx.strokeText(ln, VW / 2, yy);
+      ctx.fillText(ln, VW / 2, yy);
+    });
     ctx.restore();
   }
 
@@ -471,31 +568,57 @@
     const x = umbrella.x, y = umbrella.y, w = umbrella.w;
     const half = w / 2;
 
-    // Person (simple) under the umbrella, holding it overhead.
+    // Person under the umbrella, holding it overhead with both hands.
     ctx.save();
-    // body
-    ctx.strokeStyle = "#33415c";
-    ctx.lineWidth = 6;
+    const skin = "#f2c89b", shirt = "#3a78c2", pants = "#33415c", hair = "#3a2a1a";
+    const headY = y + 30, headR = 13;
     ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(x, y + 30);
-    ctx.lineTo(x, y + 78);
-    ctx.stroke();
+
     // legs
+    ctx.strokeStyle = pants; ctx.lineWidth = 8;
     ctx.beginPath();
-    ctx.moveTo(x, y + 78); ctx.lineTo(x - 12, y + 104);
-    ctx.moveTo(x, y + 78); ctx.lineTo(x + 12, y + 104);
+    ctx.moveTo(x - 6, y + 86); ctx.lineTo(x - 9, y + 110);
+    ctx.moveTo(x + 6, y + 86); ctx.lineTo(x + 9, y + 110);
     ctx.stroke();
-    // arms up holding pole
+    // shoes
+    ctx.fillStyle = "#222";
+    ctx.beginPath(); ctx.ellipse(x - 11, y + 112, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 11, y + 112, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+
+    // torso (rounded shirt)
+    ctx.fillStyle = shirt;
+    roundRect(x - 14, y + 44, 28, 46, 11); ctx.fill();
+
+    // arms raised, holding the pole overhead
+    ctx.strokeStyle = skin; ctx.lineWidth = 7;
     ctx.beginPath();
-    ctx.moveTo(x, y + 44); ctx.lineTo(x - 14, y + 14);
-    ctx.moveTo(x, y + 44); ctx.lineTo(x + 14, y + 14);
+    ctx.moveTo(x - 11, y + 52); ctx.lineTo(x - 5, y + 4);
+    ctx.moveTo(x + 11, y + 52); ctx.lineTo(x + 5, y + 4);
     ctx.stroke();
+    // hands
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(x - 5, y + 2, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 5, y + 2, 5, 0, Math.PI * 2); ctx.fill();
+
+    // neck
+    ctx.strokeStyle = skin; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.moveTo(x, y + 44); ctx.lineTo(x, headY + headR - 3); ctx.stroke();
+
     // head
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(x, headY, headR, 0, Math.PI * 2); ctx.fill();
+    // hair (top half)
+    ctx.fillStyle = hair;
     ctx.beginPath();
-    ctx.arc(x, y + 18, 11, 0, Math.PI * 2);
-    ctx.fillStyle = "#f1c89b";
-    ctx.fill();
+    ctx.arc(x, headY, headR + 1, Math.PI, 2 * Math.PI);
+    ctx.closePath(); ctx.fill();
+    // eyes
+    ctx.fillStyle = "#222";
+    ctx.beginPath(); ctx.arc(x - 4.5, headY + 2, 1.9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 4.5, headY + 2, 1.9, 0, Math.PI * 2); ctx.fill();
+    // smile
+    ctx.strokeStyle = "#a8543a"; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(x, headY + 4, 4, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
     ctx.restore();
 
     // Upside-down umbrella (a bowl that catches money)
