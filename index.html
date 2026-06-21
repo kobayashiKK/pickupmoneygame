@@ -222,9 +222,9 @@
   const umbrella = {
     x: VW / 2,
     y: VH - 120,
-    w: 110,     // current catch width (rim of upside-down umbrella)
-    baseW: 110, // width at level 0
-    minW: 54,   // smallest it can shrink to
+    w: 140,     // current catch width (rim of upside-down umbrella)
+    baseW: 140, // width at level 0
+    minW: 60,   // smallest it can shrink to
     speed: 7,
   };
   let moveLeft = false, moveRight = false;
@@ -472,7 +472,7 @@
     // Difficulty rises with both time and score, but slowly (less often than
     // before). Each step alternates between shrinking the umbrella and
     // speeding up the falling money.
-    const newLevel = Math.floor(elapsed / 22) + Math.floor(score / 6000);
+    const newLevel = Math.floor(elapsed / 30) + Math.floor(score / 30000);
     if (newLevel > level) {
       for (let lv = level + 1; lv <= newLevel; lv++) applyLevelStep(lv);
       level = newLevel;
