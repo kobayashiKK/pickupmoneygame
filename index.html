@@ -452,11 +452,9 @@
       reward.items + "が買えるぞ！" +
       "（うまい棒 約" + fmt(Math.floor(score / 10)) + "本分！）";
     document.getElementById("overTitle").textContent = "💥 ゲームオーバー";
-    // Note: avoid classList.toggle(name, force) — Safari has ignored the force
-    // argument in some versions, which made this show on non-records.
-    const newRecordEl = document.getElementById("newRecord");
-    if (isRecord) newRecordEl.classList.remove("hidden");
-    else newRecordEl.classList.add("hidden");
+    // Set display directly: the `.hidden` class is only defined for `.screen`
+    // elements, so toggling the class on this <p> had no effect.
+    document.getElementById("newRecord").style.display = isRecord ? "block" : "none";
     overScreen.classList.remove("hidden");
     updateHud();
   }
